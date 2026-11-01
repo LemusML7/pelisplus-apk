@@ -1,0 +1,352 @@
+name: Compilar APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear proyecto Android desde este archivo
+        run: |
+          cat > settings.gradle <<'EOF_PPWV'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = "PelisplusWebView"
+          include(":app")
+          EOF_PPWV
+          cat > build.gradle <<'EOF_PPWV'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF_PPWV
+          cat > gradle.properties <<'EOF_PPWV'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF_PPWV
+          mkdir -p app
+          cat > app/build.gradle <<'EOF_PPWV'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'hn.lemusml7.pelispluswebview'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'hn.lemusml7.pelispluswebview'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF_PPWV
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_PPWV'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application
+                  android:allowBackup="false"
+                  android:label="Pelisplus Control"
+                  android:usesCleartextTraffic="false"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF_PPWV
+          mkdir -p app/src/main/java/hn/lemusml7/pelispluswebview
+          cat > app/src/main/java/hn/lemusml7/pelispluswebview/MainActivity.java <<'EOF_PPWV'
+          package hn.lemusml7.pelispluswebview;
+
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.webkit.SafeBrowsingResponse;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Button;
+          import android.widget.CheckBox;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.widget.Toast;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+
+          import org.json.JSONArray;
+
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends Activity {
+              private static final String HOME = "https://pelisplus.la/";
+              private static final String DOMAIN = "pelisplus.la";
+              private WebView webView;
+              private SharedPreferences prefs;
+              private CheckBox ads, banners, headers, popups, spaces;
+              private EditText customSelectors;
+
+              @Override public void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  prefs = getSharedPreferences("filters", MODE_PRIVATE);
+                  buildScreen();
+                  configureWebView();
+                  if (state == null) webView.loadUrl(HOME);
+              }
+
+              private void buildScreen() {
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(Color.rgb(10, 17, 29));
+
+                  LinearLayout bar = new LinearLayout(this);
+                  bar.setGravity(Gravity.CENTER_VERTICAL);
+                  bar.setPadding(dp(14), dp(8), dp(12), dp(8));
+                  bar.setBackgroundColor(Color.rgb(17, 29, 46));
+
+                  TextView title = new TextView(this);
+                  title.setText("PELISPLUS  ·  CONTROL");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(15);
+                  title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                  bar.addView(title, new LinearLayout.LayoutParams(0, dp(46), 1));
+
+                  Button settings = new Button(this);
+                  settings.setText("FILTROS");
+                  settings.setTextSize(12);
+                  settings.setTextColor(Color.rgb(5, 35, 22));
+                  settings.setBackground(tint(Color.rgb(53, 207, 138)));
+                  bar.addView(settings, new LinearLayout.LayoutParams(dp(94), dp(42)));
+                  settings.setOnClickListener(v -> showFilters());
+
+                  root.addView(bar);
+                  webView = new WebView(this);
+                  root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1));
+                  setContentView(root);
+              }
+
+              private void configureWebView() {
+                  WebSettings s = webView.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setDatabaseEnabled(false);
+                  s.setAllowFileAccess(false);
+                  s.setAllowContentAccess(false);
+                  s.setJavaScriptCanOpenWindowsAutomatically(false);
+                  s.setSupportMultipleWindows(false);
+                  s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+                  if (android.os.Build.VERSION.SDK_INT >= 26) s.setSafeBrowsingEnabled(true);
+
+                  webView.setBackgroundColor(Color.rgb(10, 17, 29));
+                  webView.setWebChromeClient(new WebChromeClient());
+                  webView.setWebViewClient(new WebViewClient() {
+                      @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                          Uri uri = request.getUrl();
+                          String scheme = uri.getScheme() == null ? "" : uri.getScheme();
+                          String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
+                          if (!scheme.equals("https")) return true;
+                          if (host.equals(DOMAIN) || host.endsWith("." + DOMAIN)) return false;
+                          try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
+                          catch (Exception ignored) { }
+                          return true;
+                      }
+
+                      @Override public void onPageFinished(WebView view, String url) {
+                          super.onPageFinished(view, url);
+                          if (isAllowed(url)) applyFilters();
+                      }
+                  });
+              }
+
+              private boolean isAllowed(String url) {
+                  try {
+                      Uri u = Uri.parse(url);
+                      String host = u.getHost() == null ? "" : u.getHost().toLowerCase();
+                      return "https".equals(u.getScheme()) && (host.equals(DOMAIN) || host.endsWith("." + DOMAIN));
+                  } catch (Exception e) { return false; }
+              }
+
+              private void showFilters() {
+                  LinearLayout box = new LinearLayout(this);
+                  box.setOrientation(LinearLayout.VERTICAL);
+                  box.setPadding(dp(20), dp(8), dp(20), dp(4));
+
+                  ads = check(box, "Ocultar anuncios", "ads", true);
+                  banners = check(box, "Ocultar banners", "banners", true);
+                  headers = check(box, "Ocultar encabezados", "headers", false);
+                  popups = check(box, "Ocultar capas emergentes visuales", "popups", true);
+                  spaces = check(box, "Ocultar espacios publicitarios", "spaces", true);
+
+                  TextView label = new TextView(this);
+                  label.setText("Selectores CSS personalizados (separados por comas)");
+                  label.setTextSize(12);
+                  label.setPadding(0, dp(12), 0, dp(5));
+                  box.addView(label);
+                  customSelectors = new EditText(this);
+                  customSelectors.setText(prefs.getString("custom", ""));
+                  customSelectors.setTextSize(13);
+                  customSelectors.setMinLines(2);
+                  customSelectors.setGravity(Gravity.TOP);
+                  customSelectors.setHint(".mi-anuncio, #banner");
+                  box.addView(customSelectors);
+
+                  new AlertDialog.Builder(this)
+                      .setTitle("Configuración de filtros")
+                      .setView(box)
+                      .setNegativeButton("Cancelar", (d, w) -> {})
+                      .setNeutralButton("Volver a cargar", (d, w) -> {
+                          saveDialogValues();
+                          webView.reload();
+                      })
+                      .setPositiveButton("Guardar", (d, w) -> {
+                          saveDialogValues();
+                          applyFilters();
+                          Toast.makeText(this, "Preferencias guardadas", Toast.LENGTH_SHORT).show();
+                      }).show();
+              }
+
+              private CheckBox check(LinearLayout parent, String label, String key, boolean def) {
+                  CheckBox c = new CheckBox(this);
+                  c.setText(label);
+                  c.setTextSize(14);
+                  c.setChecked(prefs.getBoolean(key, def));
+                  parent.addView(c);
+                  return c;
+              }
+
+              private void saveDialogValues() {
+                  prefs.edit()
+                      .putBoolean("ads", ads.isChecked())
+                      .putBoolean("banners", banners.isChecked())
+                      .putBoolean("headers", headers.isChecked())
+                      .putBoolean("popups", popups.isChecked())
+                      .putBoolean("spaces", spaces.isChecked())
+                      .putString("custom", customSelectors.getText().toString())
+                      .apply();
+              }
+
+              private void applyFilters() {
+                  if (webView == null) return;
+                  List<String> selectors = new ArrayList<>();
+                  if (prefs.getBoolean("ads", true)) {
+                      selectors.add("[class*='advert' i]");
+                      selectors.add("[class*='adsbox' i]");
+                      selectors.add("[data-ad]");
+                      selectors.add("[id^='div-gpt-ad']");
+                  }
+                  if (prefs.getBoolean("banners", true)) {
+                      selectors.add("[class*='banner' i]");
+                      selectors.add("[id*='banner' i]");
+                      selectors.add("[class*='sponsor' i]");
+                  }
+                  if (prefs.getBoolean("headers", false)) {
+                      selectors.add("header");
+                      selectors.add(".site-header");
+                  }
+                  if (prefs.getBoolean("popups", true)) {
+                      selectors.add("[class*='popup' i]");
+                      selectors.add("[id*='popup' i]");
+                      selectors.add("[class*='modal-ad' i]");
+                  }
+                  if (prefs.getBoolean("spaces", true)) {
+                      selectors.add("[class*='adslot' i]");
+                      selectors.add("[id*='adslot' i]");
+                      selectors.add("[class*='advertisement' i]");
+                  }
+
+                  String custom = prefs.getString("custom", "");
+                  for (String item : custom.split(",")) {
+                      String q = item.trim();
+                      if (!q.isEmpty() && q.length() < 160) selectors.add(q);
+                  }
+
+                  JSONArray arr = new JSONArray();
+                  for (String q : selectors) arr.put(q);
+                  String js = "(function(){'use strict';"
+                      + "var allowed='" + DOMAIN + "';"
+                      + "var h=location.hostname.toLowerCase();"
+                      + "if(!(h===allowed||h.endsWith('.'+allowed)))return;"
+                      + "var selectors=" + arr.toString() + ";"
+                      + "function hide(){selectors.forEach(function(q){try{document.querySelectorAll(q).forEach(function(e){"
+                      + "e.style.setProperty('display','none','important');"
+                      + "e.setAttribute('data-ppwv-hidden','1');});}catch(x){}});}"
+                      + "var id='ppwv-native-filter-style';var st=document.getElementById(id);"
+                      + "if(!st){st=document.createElement('style');st.id=id;(document.head||document.documentElement).appendChild(st);}"
+                      + "st.textContent=selectors.map(function(q){return q+'{display:none!important;visibility:hidden!important;max-height:0!important;overflow:hidden!important}';}).join('\\n');"
+                      + "hide();if(window.__ppwvObserver)window.__ppwvObserver.disconnect();"
+                      + "window.__ppwvObserver=new MutationObserver(hide);"
+                      + "window.__ppwvObserver.observe(document.documentElement,{childList:true,subtree:true});"
+                      + "})();";
+                  webView.evaluateJavascript(js, null);
+              }
+
+              @Override public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) webView.goBack();
+                  else super.onBackPressed();
+              }
+
+              private GradientDrawable tint(int color) {
+                  GradientDrawable d = new GradientDrawable();
+                  d.setColor(color);
+                  d.setCornerRadius(dp(12));
+                  return d;
+              }
+              private int dp(int v) { return (int)(v * getResources().getDisplayMetrics().density + 0.5f); }
+          }
+          EOF_PPWV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Preparar Android SDK 35
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Compilar APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Renombrar APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk Pelisplus-Control.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pelisplus-Control-APK
+          path: Pelisplus-Control.apk
+
+      - name: Publicar en Releases (descarga directa)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: APK ${{ github.run_number }}
+          files: Pelisplus-Control.apk
+          
